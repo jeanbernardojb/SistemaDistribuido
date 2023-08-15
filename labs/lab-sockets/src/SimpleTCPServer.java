@@ -1,43 +1,107 @@
-import java.io.*;
-import java.net.*;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
 
 public class SimpleTCPServer {
-    public static void main(String args[]) {
+    private ServerSocket serverSocket;
+    private List<ClientHandler> clients = new ArrayList<>();
+
+    public void start(int port) throws IOException {
+        System.out.println("[S1] Criando server socket para aguardar conexões de clientes em loop");
+        serverSocket = new ServerSocket(port);
+
+        while (true) {
+            System.out.println("[S2] Aguardando conexão em: " + serverSocket.getLocalSocketAddress());
+            Socket socket = serverSocket.accept();
+            System.out.println("[S3] Conexão estabelecida com cliente: " + socket.getRemoteSocketAddress());
+
+            ClientHandler clientHandler = new ClientHandler(socket);
+            clients.add(clientHandler);
+            new Thread(clientHandler).start();
+        }
+    }
+
+    public void stop() {
         try {
-            int serverPort = 6666;
-            ServerSocket serverSocket = new ServerSocket(serverPort);
+            serverSocket.close();
+            for (ClientHandler client : clients) {
+                client.close();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
-            System.out.println("Servidor esperando por conexões na porta " + serverPort);
+    private class ClientHandler implements Runnable {
+        private Socket socket;
+        private DataInputStream input;
+        private DataOutputStream output;
 
-            Socket clientSocket = serverSocket.accept();
-            BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true);
+        public ClientHandler(Socket socket) throws IOException {
+            this.socket = socket;
+            input = new DataInputStream(socket.getInputStream());
+            output = new DataOutputStream(socket.getOutputStream());
+        }
 
-            BufferedReader consoleIn = new BufferedReader(new InputStreamReader(System.in));
+        public void run() {
+            try {
+                while (true) {
+                    String msg = input.readUTF();
+                    System.out.println("Cliente " + socket.getRemoteSocketAddress() + ": " + msg);
 
-            String inputLine, outputLine;
-
-            while (true) {
-                System.out.print("Você: ");
-                inputLine = consoleIn.readLine();
-                out.println(inputLine);
-
-                if (inputLine.equals("bye")) {
-                    break;
+                    // Encaminha a mensagem para todos os outros clientes conectados
+                    broadcastMessageToOthers("Cliente " + socket.getRemoteSocketAddress() + ": " + msg, this);
                 }
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                close();
+            }
+        }
 
-                outputLine = in.readLine();
-                System.out.println("Cliente: " + outputLine);
+        public void close() {
+            try {
+                input.close();
+                output.close();
+                socket.close();
+                clients.remove(this);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
 
-                if (outputLine.equals("bye")) {
-                    break;
+        public void sendMessage(String msg) throws IOException {
+            output.writeUTF(msg);
+        }
+    }
+
+    private void broadcastMessageToOthers(String msg, ClientHandler sender) {
+        for (ClientHandler client : clients) {
+            if (client != sender) {
+                try {
+                    client.sendMessage(msg);
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
             }
+        }
+    }
 
-            clientSocket.close();
-            serverSocket.close();
+    public static void main(String[] args) {
+        int serverPort = 6666;
+        try {
+            // Inicia e roda o servidor
+            SimpleTCPServer server = new SimpleTCPServer();
+            server.start(serverPort);
+
+            // Finaliza o servidor
+            server.stop();
         } catch (IOException e) {
-            System.out.println("Erro: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }
